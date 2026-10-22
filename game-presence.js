@@ -1909,26 +1909,43 @@
         return Object.prototype.hasOwnProperty.call(obj, name);
     }
 
+    const PROBE = `__gp_probe_${Math.random().toString(36).slice(2)}`;
+    function answersEverything(obj) {
+        return hasMethod(obj, PROBE) || hasOwn(obj, PROBE);
+    }
+
     function findInModules(req, predicate) {
         for (const mod of Object.values(req.c)) {
             try {
                 const exp = mod?.exports;
                 if (!exp || (typeof exp !== "object" && typeof exp !== "function")) continue;
+                if (answersEverything(exp)) continue;
                 for (const value of [exp, ...Object.values(exp)]) {
-                    if (value && typeof value === "object" && predicate(value)) return value;
+                    try {
+                        if (!value || typeof value !== "object" || answersEverything(value)) continue;
+                        if (predicate(value)) return value;
+                    } catch (_) {}
                 }
             } catch (_) {}
         }
         return null;
     }
 
+    function storeName(store) {
+        if (hasMethod(store, "getName")) return store.getName();
+        return store.constructor?.displayName;
+    }
+
     const req = getWebpackRequire();
     if (!req?.c) throw new Error("[Game Presence] Webpack de Discord introuvable (Discord desktop requis).");
 
     const runStore = findInModules(req, v =>
-        hasMethod(v, "getRunningGames") && hasMethod(v, "getGameForPID"));
+        hasMethod(v, "getRunningGames") && hasMethod(v, "getGameForPID") &&
+        storeName(v) === "RunningGameStore" &&
+        Array.isArray(v.getRunningGames()));
     const dispatcher = findInModules(req, v =>
-        hasMethod(v, "dispatch") && hasMethod(v, "subscribe") && hasOwn(v, "_subscriptions"));
+        hasMethod(v, "dispatch") && hasMethod(v, "subscribe") &&
+        hasOwn(v, "_subscriptions") && typeof v._subscriptions === "object");
     if (!runStore || !dispatcher) {
         const missing = [!runStore && "RunningGameStore", !dispatcher && "Dispatcher"].filter(Boolean).join(" et ");
         throw new Error(`[Game Presence] ${missing} introuvable (${Object.keys(req.c).length} modules scannés).`);
@@ -1998,7 +2015,7 @@
         };
     }
 
-    const withoutOurs = list => (list ?? []).filter(g => g?.pid !== pid);
+    const withoutOurs = list => Array.isArray(list) ? list.filter(g => g?.pid !== pid) : [];
     const realGames = () => withoutOurs(original.getRunningGames.call(runStore));
 
     function patchStore() {
@@ -2016,8 +2033,12 @@
         }
     }
 
+    const ownBefore = new Set(PATCHED.filter(key => hasOwn(runStore, key)));
     function restoreStore() {
-        for (const [key, fn] of Object.entries(original)) runStore[key] = fn;
+        for (const [key, fn] of Object.entries(original)) {
+            if (ownBefore.has(key)) runStore[key] = fn;
+            else delete runStore[key];
+        }
     }
 
     function clearActivity() {
@@ -2095,8 +2116,8 @@
         stopped = true;
         clearTimeout(switchTimer);
         clearInterval(tickTimer);
-        clearActivity();
         restoreStore();
+        try { clearActivity(); } catch (_) {}
         window.removeEventListener("pagehide", stop);
         ui.destroy();
         delete window[LOCK];
@@ -2377,10 +2398,15 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
     };
 
     window.addEventListener("pagehide", stop, { once: true });
-    patchStore();
-    activate();
-    schedule();
-    tickTimer = setInterval(() => ui.tick(), 1000);
+    try {
+        patchStore();
+        activate();
+        schedule();
+        tickTimer = setInterval(() => ui.tick(), 1000);
+    } catch (error) {
+        stop();
+        throw error;
+    }
 
     console.log(`[Game Presence] ${CATALOG.length} jeux chargés. Commandes : window.__gamePresence.next() / .play("Minecraft") / .stop()`);
 })();
