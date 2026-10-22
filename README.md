@@ -18,10 +18,10 @@ This repository is a modified continuation of [everyoneexe/discord-game-badge-pr
 
 ## Features
 
-- Main script: `game-presence.js` (~135 KB, down from ~980 KB).
-- Compact embedded catalogue: 1 845 games stored as `[name, discord_application_id, steam_appid?]`.
+- Main script: `game-presence.js` (~120 KB, down from ~980 KB).
+- Compact embedded catalogue: 1 845 games stored as `[name, discord_application_id]`.
 - Large shuffled catalogue of popular games, including Minecraft, Fortnite, Roblox, CS:GO, GTA, Valorant, League of Legends, and many more.
-- Game logos for every game with a Steam ID (1 549 games), with an emoji fallback.
+- Official game icons loaded from Discord's own CDN (`/applications/{id}/rpc`), with an emoji fallback.
 - Search panel to pick any game directly (ignores accents and punctuation).
 - Purple interface using `#7d54d9`, isolated in a Shadow DOM so its styles never leak into Discord.
 - Playback controls: previous, pause/resume, and next (wraps around the list).
@@ -90,7 +90,6 @@ The embedded catalogue only keeps the fields the script actually uses:
 
 - the game name;
 - `discord_application_id`: the public Discord application ID associated with the game;
-- the Steam app ID, when the source catalogue has one, used only to load the game logo.
 
 The source catalogue is [this public list](https://gist.github.com/1271/cf4b6a3b562532988fa5b0688102b2cc). The local Rich Presence payload sends the game name, type, timestamps, and matching `application_id`.
 
@@ -99,7 +98,7 @@ The source catalogue is [this public list](https://gist.github.com/1271/cf4b6a3b
 - Discord displays one primary activity, not every game simultaneously.
 - Badge progression and account recognition are not guaranteed.
 - Discord restarts and reloads clear the in-memory changes.
-- External logo URLs may be blocked by Discord's content-security policy; the interface falls back automatically.
+- Game icons come from Discord's public application endpoint; if it fails, an emoji is shown instead.
 - Discord may change internal modules without notice.
 
 ## Troubleshooting
