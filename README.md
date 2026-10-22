@@ -19,6 +19,8 @@ This repository is a modified continuation of [everyoneexe/discord-game-badge-pr
 ## Features
 
 - Main script: `game-presence.js`.
+- Catalogue complet embarqué dans `game-presence.js`, avec 1 845 fiches et leurs données de catalogue.
+- Chaque fiche conserve son `discord_application_id`, ses alias, son `verify_key` source et ses `third_party_skus` (`distributor`, `id`, `sku`).
 - Large shuffled catalogue of popular games, including Minecraft, Fortnite, Roblox, CS2, GTA, Valorant, League of Legends, and many more.
 - Purple interface using `#7d54d9`.
 - Playback controls: previous, pause/resume, and next.
@@ -48,7 +50,7 @@ Discord can change these undocumented internals at any time. Compatibility is no
 Run only one copy at a time. To stop an existing instance:
 
 ```js
-window.__multiGamePresence.stop()
+window.__gamePresence.stop()
 ```
 
 ## Controls
@@ -64,17 +66,28 @@ window.__multiGamePresence.stop()
 ## Console commands
 
 ```js
-window.__multiGamePresence.next()
-window.__multiGamePresence.current
-window.__multiGamePresence.games
-window.__multiGamePresence.stop()
+window.__gamePresence.next()
+window.__gamePresence.current
+window.__gamePresence.currentGame
+window.__gamePresence.games
+window.__gamePresence.stop()
 ```
 
 ## How it works
 
-The script locates Discord's Webpack module registry, resolves `RunningGameStore` and the Flux dispatcher, and injects one synthetic running-game record. It dispatches local game-state events while changing the displayed game according to the playback state.
+The script locates Discord's Webpack module registry, resolves `RunningGameStore` and the Flux dispatcher, and injects one synthetic running-game record. It dispatches local game-state events while changing the displayed game according to the playback state. Each activity includes the matching catalogue entry's public `application_id` when Discord accepts it.
 
 It does not launch games, modify Steam playtime, attach to game processes, access Discord tokens, read passwords, or send project telemetry to an external server. Synthetic executable paths are metadata only.
+
+## Catalogue data and Rich Presence
+
+The embedded catalogue keeps the source fields needed to inspect each game:
+
+- `discord_application_id`: the public Discord application ID associated with the game.
+- `third_party_skus`: distributor records containing `id` and `sku` values.
+- `verify_key`: source catalogue metadata retained for reference only.
+
+The local Rich Presence payload sends the game name, type, timestamps, and matching `application_id`. The `verify_key`, SKU `id`, and SKU `sku` remain available through `window.__gamePresence.currentGame`, but are not sent as Rich Presence fields because they are not part of Discord's activity payload. The script never treats them as client secrets or credentials.
 
 ## Limitations
 
