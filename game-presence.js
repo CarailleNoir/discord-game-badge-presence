@@ -5,7 +5,7 @@
     const STORAGE_KEY = "game-presence-v2";
 
     if (window[LOCK]?.stop) {
-        console.warn("[Game Presence] Déjà lancé. Pour arrêter : window.__gamePresence.stop()");
+        console.warn("[Game Presence] Already running. To stop: window.__gamePresence.stop()");
         return;
     }
 
@@ -28,6 +28,7 @@
         ["Hearthstone","356875890958925834"],
         ["Dota 2","356875988589740042"],
         ["Grand Theft Auto V","356876176465199104"],
+        ["Grand Theft Auto VI","1445160676522856458"],
         ["Tom Clancy's Rainbow Six Siege","356876590342340608"],
         ["Rocket League","356877880938070016"],
         ["Heroes of the Storm","356878860190613504"],
@@ -1937,7 +1938,7 @@
     }
 
     const req = getWebpackRequire();
-    if (!req?.c) throw new Error("[Game Presence] Webpack de Discord introuvable (Discord desktop requis).");
+    if (!req?.c) throw new Error("[Game Presence] Discord Webpack not found (Discord desktop is required).");
 
     const runStore = findInModules(req, v =>
         hasMethod(v, "getRunningGames") && hasMethod(v, "getGameForPID") &&
@@ -1947,15 +1948,15 @@
         hasMethod(v, "dispatch") && hasMethod(v, "subscribe") &&
         hasOwn(v, "_subscriptions") && typeof v._subscriptions === "object");
     if (!runStore || !dispatcher) {
-        const missing = [!runStore && "RunningGameStore", !dispatcher && "Dispatcher"].filter(Boolean).join(" et ");
-        throw new Error(`[Game Presence] ${missing} introuvable (${Object.keys(req.c).length} modules scannés).`);
+        const missing = [!runStore && "RunningGameStore", !dispatcher && "Dispatcher"].filter(Boolean).join(" and ");
+        throw new Error(`[Game Presence] ${missing} not found (${Object.keys(req.c).length} modules scanned).`);
     }
 
     const PATCHED = ["getRunningGames", "getGameForPID", "getVisibleGame", "getVisibleRunningGames", "getCandidateGames"];
     const original = {};
     for (const key of PATCHED) if (typeof runStore[key] === "function") original[key] = runStore[key];
     if (!original.getRunningGames || !original.getGameForPID) {
-        throw new Error("[Game Presence] Méthodes du RunningGameStore introuvables.");
+        throw new Error("[Game Presence] RunningGameStore methods not found.");
     }
 
     const isLinux = /Linux/i.test(navigator.userAgent);
@@ -2065,7 +2066,7 @@
             }
         });
         ui.showGame(entry(), cursor, order.length);
-        console.log(`[Game Presence] En jeu (${cursor + 1}/${order.length}) : ${current.name}`);
+        console.log(`[Game Presence] Playing (${cursor + 1}/${order.length}): ${current.name}`);
     }
 
     function schedule() {
@@ -2121,7 +2122,7 @@
         window.removeEventListener("pagehide", stop);
         ui.destroy();
         delete window[LOCK];
-        console.log("[Game Presence] Arrêté, RunningGameStore restauré.");
+        console.log("[Game Presence] Stopped and RunningGameStore restored.");
     }
 
     const ui = (() => {
@@ -2196,15 +2197,15 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
 .result:hover { background:rgba(125,84,217,.28); color:#fff; }
 .empty { padding:6px 8px; font-size:11px; color:var(--muted); }
 </style>
-<button class="mini" title="Afficher Game Presence">🎮</button>
+<button class="mini" title="Show Game Presence">🎮</button>
 <div class="panel">
   <div class="head">
     <div class="badge"><span class="dot"></span><span class="count"></span></div>
     <div class="tools">
-      <button class="tool" data-act="search" title="Choisir un jeu">🔍</button>
-      <button class="tool" data-act="settings" title="Réglages">⚙</button>
-      <button class="tool" data-act="minimize" title="Réduire">_</button>
-      <button class="tool close" data-act="stop" title="Arrêter">✕</button>
+      <button class="tool" data-act="search" title="Choose a game">🔍</button>
+      <button class="tool" data-act="settings" title="Settings">⚙</button>
+      <button class="tool" data-act="minimize" title="Minimize">_</button>
+      <button class="tool close" data-act="stop" title="Stop">✕</button>
     </div>
   </div>
   <div class="game">
@@ -2213,19 +2214,19 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
   </div>
   <div class="track"><div class="bar"></div></div>
   <div class="player">
-    <button class="pbtn" data-act="prev" title="Jeu précédent">⏮</button>
+    <button class="pbtn" data-act="prev" title="Previous game">⏮</button>
     <button class="pbtn play" data-act="toggle" title="Pause">⏸</button>
-    <button class="pbtn" data-act="next" title="Jeu suivant">⏭</button>
+    <button class="pbtn" data-act="next" title="Next game">⏭</button>
   </div>
   <div class="drawer" data-drawer="search">
-    <input class="search" type="text" placeholder="Rechercher parmi ${CATALOG.length} jeux…" spellcheck="false">
+    <input class="search" type="text" placeholder="Search ${CATALOG.length} games…" spellcheck="false">
     <div class="results"></div>
   </div>
   <div class="drawer" data-drawer="settings">
-    <h4>Changement de jeu toutes les…</h4>
+    <h4>Change game every…</h4>
     <div class="row"><label for="gp-min">Minimum (min)</label><input id="gp-min" type="number" min="1" max="1440"></div>
     <div class="row"><label for="gp-max">Maximum (min)</label><input id="gp-max" type="number" min="1" max="1440"></div>
-    <button class="apply" data-act="apply">Appliquer</button>
+    <button class="apply" data-act="apply">Apply</button>
   </div>
 </div>`;
 
@@ -2300,7 +2301,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
                 b.onclick = () => { closeDrawers(); playIndex(i); };
                 return b;
             }) : [Object.assign(document.createElement("div"), {
-                className: "empty", textContent: q ? "Aucun jeu trouvé." : "Tape le nom d'un jeu."
+                className: "empty", textContent: q ? "No games found." : "Type a game name."
             })]));
         };
         els.search.addEventListener("input", () => renderResults(els.search.value));
@@ -2341,7 +2342,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
         return {
             showGame([name, applicationId], idx, total) {
                 const token = ++renderToken;
-                els.count.textContent = `En jeu · ${idx + 1}/${total}`;
+                els.count.textContent = `Playing · ${idx + 1}/${total}`;
                 els.title.style.opacity = "0";
                 panel.classList.add("pulse");
                 setTimeout(() => {
@@ -2362,20 +2363,20 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
             },
             tick() {
                 if (!nextSwitchAt) {
-                    els.sub.textContent = "Rotation en pause";
+                    els.sub.textContent = "Rotation paused";
                     els.bar.style.width = "0%";
                     return;
                 }
                 const left = Math.max(0, nextSwitchAt - Date.now());
                 const s = Math.floor(left / 1000);
                 const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
-                els.sub.textContent = `Prochain jeu dans ${h ? `${h}h ` : ""}${m}m ${String(sec).padStart(2, "0")}s`;
+                els.sub.textContent = `Next game in ${h ? `${h}h ` : ""}${m}m ${String(sec).padStart(2, "0")}s`;
                 els.bar.style.width = `${(((switchDuration - left) / switchDuration) * 100).toFixed(1)}%`;
             },
             setPaused(paused) {
                 panel.classList.toggle("paused", paused);
                 els.play.textContent = paused ? "▶" : "⏸";
-                els.play.title = paused ? "Reprendre la rotation" : "Mettre en pause";
+                els.play.title = paused ? "Resume rotation" : "Pause rotation";
             },
             destroy() { host.remove(); }
         };
@@ -2389,7 +2390,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
         play: name => {
             const q = normalize(name ?? "");
             const i = q ? searchGames(q)[0] : undefined;
-            if (i === undefined) return console.warn(`[Game Presence] Jeu introuvable : ${name}`);
+            if (i === undefined) return console.warn(`[Game Presence] Game not found: ${name}`);
             playIndex(i);
         },
         setIntervals,
@@ -2408,5 +2409,5 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
         throw error;
     }
 
-    console.log(`[Game Presence] ${CATALOG.length} jeux chargés. Commandes : window.__gamePresence.next() / .play("Minecraft") / .stop()`);
+    console.log(`[Game Presence] ${CATALOG.length} games loaded. Commands: window.__gamePresence.next() / .play("Minecraft") / .stop()`);
 })();

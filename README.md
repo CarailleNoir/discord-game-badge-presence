@@ -19,7 +19,7 @@ This repository is a modified continuation of [everyoneexe/discord-game-badge-pr
 ## Features
 
 - Main script: `game-presence.js` (~120 KB, down from ~980 KB).
-- Compact embedded catalogue: 1 845 games stored as `[name, discord_application_id]`.
+- Compact embedded catalogue: 1 846 games stored as `[name, discord_application_id]`.
 - Large shuffled catalogue of popular games, including Minecraft, Fortnite, Roblox, CS:GO, GTA, Valorant, League of Legends, and many more.
 - Official game icons loaded from Discord's own CDN (`/applications/{id}/rpc`), with an emoji fallback.
 - Search panel to pick any game directly (ignores accents and punctuation).
