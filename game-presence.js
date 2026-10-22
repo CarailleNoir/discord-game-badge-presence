@@ -5,8 +5,8 @@
     const STORAGE_KEY = "game-presence-v2";
 
     if (window[LOCK]?.stop) {
-        console.warn("[Game Presence] Already running. To stop: window.__gamePresence.stop()");
-        return;
+        console.warn("[Game Presence] An older instance was found. Stopping it before reload.");
+        window[LOCK].stop();
     }
 
     const CATALOG = [
@@ -1965,6 +1965,11 @@
     const order = shuffle(CATALOG.map((_, i) => i));
     let cursor = 0;
     const NAMES = CATALOG.map(([name]) => normalize(name));
+    const SEARCH_ALIASES = new Map([
+        [normalize("GTA 6"), normalize("Grand Theft Auto VI")],
+        [normalize("GTA  VI"), normalize("Grand Theft Auto VI")],
+        [normalize("Grand Theft Auto 6"), normalize("Grand Theft Auto VI")]
+    ]);
     let current = null;
     let stopped = false;
     let switchTimer = null;
@@ -1983,11 +1988,14 @@
         }
         return iconCache.get(applicationId);
     };
-    const searchGames = q => NAMES
-        .map((n, i) => ({ i, n, pos: n.indexOf(q) }))
-        .filter(hit => hit.pos !== -1)
-        .sort((a, b) => (b.n === q) - (a.n === q) || a.pos - b.pos || a.n.length - b.n.length)
-        .map(hit => hit.i);
+    const searchGames = q => {
+        const query = SEARCH_ALIASES.get(q) ?? q;
+        return NAMES
+            .map((n, i) => ({ i, n, pos: n.indexOf(query) }))
+            .filter(hit => hit.pos !== -1)
+            .sort((a, b) => (b.n === query) - (a.n === query) || a.pos - b.pos || a.n.length - b.n.length)
+            .map(hit => hit.i);
+    };
     const slug = name => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "game";
 
     function buildGame([name, applicationId]) {
