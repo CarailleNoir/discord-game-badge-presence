@@ -1,4 +1,4 @@
-(() => {
+void (async () => {
     "use strict";
 
     const LOCK = "__gamePresence";
@@ -9,7 +9,7 @@
         window[LOCK].stop();
     }
 
-    const CATALOG = [
+    let CATALOG = [
         ["SpeedRunners","259392830932254721"],
         ["Move or Die","343232907390746625"],
         ["Holodrive","346729383693778944"],
@@ -1858,20 +1858,85 @@
         ["Star Wars: Battlefront 2 (Classic, 2005)","788511984575316028"]
     ];
 
-    const DEFAULTS = { minMinutes: 23, maxMinutes: 38, paused: false, minimized: false, corner: "bottom-right" };
+    const DEFAULTS = {
+        minMinutes: 20,
+        maxMinutes: 20,
+        restMinutes: 2,
+        timingVersion: 2,
+        paused: false,
+        minimized: false,
+        corner: "bottom-right",
+        creditPlaytime: false
+    };
     const CORNERS = ["top-left", "top-right", "bottom-left", "bottom-right"];
     const settings = (() => {
         let saved = {};
         try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch (_) {}
         const s = { ...DEFAULTS, ...saved };
+        if (saved.timingVersion !== DEFAULTS.timingVersion) {
+            s.minMinutes = DEFAULTS.minMinutes;
+            s.maxMinutes = DEFAULTS.maxMinutes;
+            s.restMinutes = DEFAULTS.restMinutes;
+        }
         s.minMinutes = clamp(Number(s.minMinutes) || DEFAULTS.minMinutes, 1, 1440);
         s.maxMinutes = clamp(Number(s.maxMinutes) || DEFAULTS.maxMinutes, s.minMinutes, 1440);
+        s.restMinutes = clamp(Number(s.restMinutes) || DEFAULTS.restMinutes, 1, 10);
+        s.timingVersion = DEFAULTS.timingVersion;
         s.paused = Boolean(s.paused);
         s.minimized = Boolean(s.minimized);
+        s.creditPlaytime = Boolean(s.creditPlaytime);
         if (!CORNERS.includes(s.corner)) s.corner = DEFAULTS.corner;
         return s;
     })();
     const save = () => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch (_) {} };
+
+    function executableFor(app) {
+        const executables = Array.isArray(app?.executables) ? app.executables : [];
+        const executable = executables.find(entry => entry?.os === "win32" && entry?.is_launcher !== true && entry?.name)
+            ?? executables.find(entry => entry?.os === "win32" && entry?.name)
+            ?? executables.find(entry => entry?.name);
+        return executable?.name?.replace(/^>/, "").replace(/^.*[\\/]/, "") || null;
+    }
+
+    async function fetchDetectableCatalogue() {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
+        try {
+            const response = await fetch("https://cdn.discordapp.com/detectables/games.json", {
+                credentials: "omit",
+                cache: "no-store",
+                signal: controller.signal
+            });
+            if (!response.ok) throw new Error(`Discord CDN returned ${response.status}`);
+
+            const rawGames = await response.json();
+            if (!Array.isArray(rawGames)) throw new Error("Discord CDN returned an invalid catalogue");
+
+            const seen = new Set();
+            const games = [];
+            for (const game of rawGames) {
+                const id = String(game?.id ?? "");
+                const name = String(game?.name ?? "").trim();
+                const exeName = executableFor(game);
+                if (!/^\d+$/.test(id) || !name || !exeName || seen.has(id)) continue;
+                seen.add(id);
+                games.push([name, id, exeName]);
+            }
+
+            if (games.length < 100) throw new Error(`only ${games.length} valid games found`);
+            return games;
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    try {
+        const remoteCatalogue = await fetchDetectableCatalogue();
+        CATALOG = remoteCatalogue;
+        console.info(`[Game Presence] Loaded ${CATALOG.length} detectable games from Discord.`);
+    } catch (error) {
+        console.warn("[Game Presence] Could not load Discord's catalogue; using embedded fallback.", error);
+    }
 
     function normalize(s) {
         return String(s).toLowerCase().normalize("NFD").replace(/\p{M}/gu, "")
@@ -1940,6 +2005,48 @@
     const req = getWebpackRequire();
     if (!req?.c) throw new Error("[Game Presence] Discord Webpack not found (Discord desktop is required).");
 
+    const nativeShim = {
+        hadDiscordNative: Boolean(window.DiscordNative),
+        hadNativeModules: Boolean(window.DiscordNative?.nativeModules),
+        originalNativeModules: window.DiscordNative?.nativeModules,
+        utilsModule: null,
+        originalGetDiscordUtils: null
+    };
+
+    function installNativeShim() {
+        if (nativeShim.hadNativeModules) return;
+
+        if (!window.DiscordNative) window.DiscordNative = {};
+        window.DiscordNative.nativeModules = {
+            requireModule: () => ({
+                GetWindowFullscreenTypeByPid: () => 0,
+                init: () => {},
+                setOverlayCallback: () => {}
+            }),
+            ensureModule: () => Promise.resolve()
+        };
+
+        const utilsModule = findInModules(req, v => hasMethod(v, "getDiscordUtils"));
+        if (utilsModule) {
+            nativeShim.utilsModule = utilsModule;
+            nativeShim.originalGetDiscordUtils = utilsModule.getDiscordUtils;
+            utilsModule.getDiscordUtils = () => ({ GetWindowFullscreenTypeByPid: () => 0 });
+        }
+    }
+
+    function restoreNativeShim() {
+        if (nativeShim.utilsModule && nativeShim.originalGetDiscordUtils) {
+            nativeShim.utilsModule.getDiscordUtils = nativeShim.originalGetDiscordUtils;
+        }
+        if (!nativeShim.hadDiscordNative) {
+            delete window.DiscordNative;
+        } else if (!nativeShim.hadNativeModules) {
+            delete window.DiscordNative.nativeModules;
+        } else {
+            window.DiscordNative.nativeModules = nativeShim.originalNativeModules;
+        }
+    }
+
     const runStore = findInModules(req, v =>
         hasMethod(v, "getRunningGames") && hasMethod(v, "getGameForPID") &&
         storeName(v) === "RunningGameStore" &&
@@ -1952,12 +2059,20 @@
         throw new Error(`[Game Presence] ${missing} not found (${Object.keys(req.c).length} modules scanned).`);
     }
 
-    const PATCHED = ["getRunningGames", "getGameForPID", "getVisibleGame", "getVisibleRunningGames", "getCandidateGames"];
+    const PATCHED = [
+        "getRunningGames", "getGameForPID", "getVisibleGame", "getVisibleRunningGames", "getCandidateGames",
+        "getRunningDiscordApplicationIds", "getRunningVerifiedApplicationIds", "getCurrentGameForAnalytics",
+        "getGamesSeen", "isGameSeen", "isDetectionEnabled", "getGameForName", "getSeenGameByName"
+    ];
     const original = {};
     for (const key of PATCHED) if (typeof runStore[key] === "function") original[key] = runStore[key];
     if (!original.getRunningGames || !original.getGameForPID) {
         throw new Error("[Game Presence] RunningGameStore methods not found.");
     }
+
+    const superProperties = findInModules(req, v => hasMethod(v, "getSuperProperties"));
+    const restAPI = window.Vencord?.Webpack?.Common?.RestAPI
+        ?? findInModules(req, v => hasMethod(v, "get") && hasMethod(v, "post") && hasMethod(v, "del"));
 
     const isLinux = /Linux/i.test(navigator.userAgent);
     const OS = isLinux ? "linux" : "win32";
@@ -1973,9 +2088,13 @@
     let current = null;
     let stopped = false;
     let switchTimer = null;
+    let breakTimer = null;
     let tickTimer = null;
+    let activityHeartbeatTimer = null;
     let nextSwitchAt = 0;
     let switchDuration = 0;
+    let breakEndsAt = 0;
+    let isResting = false;
 
     const entry = () => CATALOG[order[cursor]];
     const iconCache = new Map();
@@ -1998,26 +2117,32 @@
     };
     const slug = name => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "game";
 
-    function buildGame([name, applicationId]) {
-        const exeName = isLinux ? slug(name) : `${slug(name)}.exe`;
+    function buildGame([name, applicationId, detectableExe]) {
+        const exeName = detectableExe || (isLinux ? slug(name) : `${slug(name)}.exe`);
         const exePath = isLinux
             ? `/home/user/.local/share/games/${slug(name)}/${exeName}`
             : `c:/program files/${slug(name)}/${exeName}`;
+        const startedAt = Date.now();
         return {
-            id: null,
+            id: applicationId,
             name,
             application_id: applicationId,
             pid,
             pidPath: [pid],
             processName: name,
-            start: Date.now(),
+            start: startedAt,
+            lastFocused: Math.floor(startedAt / 1000),
+            lastLaunched: startedAt,
             exeName,
             exePath,
             cmdLine: exePath,
             executables: [{ os: OS, name: exeName, is_launcher: false }],
+            distributor: "steam",
+            nativeProcessObserverId: -1,
             windowHandle: 0,
             fullscreenType: 0,
             overlay: false,
+            elevated: false,
             sandboxed: false,
             hidden: false,
             isLauncher: false
@@ -2026,6 +2151,221 @@
 
     const withoutOurs = list => Array.isArray(list) ? list.filter(g => g?.pid !== pid) : [];
     const realGames = () => withoutOurs(original.getRunningGames.call(runStore));
+
+    let analyticsToken = "";
+    let analyticsTokenFetchedAt = 0;
+    let analyticsSequence = 0;
+    const fingerprints = new Map();
+    const analyticsSession = {
+        heartbeatSession: crypto.randomUUID(),
+        launchSignature: crypto.randomUUID(),
+        launchId: crypto.randomUUID(),
+        superProperties: null
+    };
+
+    function clientSession() {
+        if (analyticsSession.superProperties == null) {
+            let currentProperties = {};
+            try { currentProperties = superProperties?.getSuperProperties?.() ?? {}; } catch (_) {}
+            analyticsSession.heartbeatSession = currentProperties.client_heartbeat_session_id
+                ?? analyticsSession.heartbeatSession;
+            analyticsSession.launchSignature = currentProperties.launch_signature
+                ?? analyticsSession.launchSignature;
+            analyticsSession.superProperties = {
+                ...currentProperties,
+                client_launch_id: currentProperties.client_launch_id ?? analyticsSession.launchId,
+                launch_signature: analyticsSession.launchSignature,
+                client_heartbeat_session_id: analyticsSession.heartbeatSession
+            };
+        }
+
+        return {
+            heartbeatSession: analyticsSession.heartbeatSession,
+            launchSignature: analyticsSession.launchSignature,
+            locale: analyticsSession.superProperties.system_locale ?? "en-US",
+            superProperties: analyticsSession.superProperties
+        };
+    }
+
+    function fingerprintFor(gameId) {
+        const known = fingerprints.get(gameId);
+        if (known !== undefined) return known;
+
+        let detected = [];
+        try {
+            detected = [
+                ...(typeof runStore.getRunningGames === "function" ? runStore.getRunningGames() : []),
+                ...(typeof runStore.getGamesSeen === "function" ? runStore.getGamesSeen(true) : [])
+            ];
+        } catch (_) {}
+
+        const fingerprint = detected.find(game =>
+            (game?.id === gameId || game?.application_id === gameId) && game?.executableFingerprint
+        )?.executableFingerprint ?? "";
+        fingerprints.set(gameId, fingerprint);
+        return fingerprint;
+    }
+
+    function apiUrl(path, version = "v10") {
+        return `${location.origin}/api/${version}${path}`;
+    }
+
+    function apiHeaders(properties) {
+        const headers = {
+            Accept: "*/*",
+            "Accept-Language": "en-US",
+            "Content-Type": "application/json",
+            Origin: location.origin,
+            Referer: `${location.origin}/channels/@me`,
+            "X-Debug-Options": "bugReporterEnabled",
+            "X-Discord-Locale": "en-US",
+            "X-Discord-Timezone": Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+        };
+        if (properties && Object.keys(properties).length > 0) {
+            headers["X-Super-Properties"] = btoa(unescape(encodeURIComponent(JSON.stringify(properties))));
+        }
+        return headers;
+    }
+
+    async function discordFetch(path, options = {}) {
+        let response = await fetch(apiUrl(path, "v10"), options);
+        if (response.status === 404) response = await fetch(apiUrl(path, "v9"), options);
+        return response;
+    }
+
+    async function getAnalyticsToken() {
+        if (analyticsToken && Date.now() - analyticsTokenFetchedAt < 12 * 60 * 60 * 1000) {
+            return analyticsToken;
+        }
+
+        const session = clientSession();
+        let body;
+        if (restAPI?.get) {
+            const result = await restAPI.get({ url: "/users/@me", query: { with_analytics_token: true } });
+            body = result?.body ?? result;
+        } else {
+            const response = await discordFetch("/users/@me?with_analytics_token=true", {
+                credentials: "include",
+                headers: apiHeaders(session.superProperties)
+            });
+            if (!response.ok) throw new Error(`Discord returned ${response.status} while fetching analytics token`);
+            body = await response.json();
+        }
+
+        if (typeof body?.analytics_token !== "string") throw new Error("Discord returned no analytics_token");
+        analyticsToken = body.analytics_token;
+        analyticsTokenFetchedAt = Date.now();
+        return analyticsToken;
+    }
+
+    function buildLaunch(game, fingerprint, at) {
+        const { heartbeatSession, launchSignature, locale } = clientSession();
+        const properties = {
+            client_track_timestamp: at,
+            client_heartbeat_session_id: heartbeatSession,
+            event_sequence_number: ++analyticsSequence,
+            game: game.name,
+            game_id: game.id,
+            verified: true,
+            elevated: false,
+            is_launcher: false,
+            game_platform: "desktop",
+            detection_method: "verified_game",
+            is_overlay_enabled: false,
+            is_overlay_game_enabled: true,
+            is_overlay_game_source: "OOP_DEFAULT_DATABASE",
+            fullscreen_type: "UNKNOWN",
+            hardware_display_count: 1,
+            overlay_method: "Disabled",
+            activity_status_enabled: true,
+            activity_status_shared_guilds: [],
+            current_user_status: "online",
+            game_detection_enabled: true,
+            executable_path: game.exeName,
+            voice_channel_id: null,
+            voice_channel_type: null,
+            voice_channel_bitrate: null,
+            voice_channel_guild_id: null,
+            hidden_by_distributor: false,
+            game_metadata: null,
+            client_performance_cpu: null,
+            client_performance_memory: null,
+            cpu_core_count: null,
+            accessibility_features: 0,
+            rendered_locale: locale,
+            launch_signature: launchSignature,
+            client_rtc_state: null,
+            client_app_state: "focused",
+            client_send_timestamp: at
+        };
+        if (fingerprint) properties.executable_fingerprint = fingerprint;
+        return { type: "launch_game", properties };
+    }
+
+    function buildHeartbeat(game, durationMs, gameSession, initial, at) {
+        const { heartbeatSession, launchSignature } = clientSession();
+        return {
+            type: "running_game_heartbeat",
+            properties: {
+                client_track_timestamp: at,
+                client_heartbeat_session_id: heartbeatSession,
+                event_sequence_number: ++analyticsSequence,
+                game_id: game.id,
+                game_name: game.name,
+                game_metadata: null,
+                game_executable: game.exeName,
+                game_detection_enabled: true,
+                initial_heartbeat: initial,
+                final_heartbeat: !initial,
+                game_session_id: gameSession,
+                duration_tracked_ms: durationMs,
+                rtc_connection_id: null,
+                media_session_id: null,
+                launch_signature: launchSignature,
+                client_app_state: "focused",
+                client_send_timestamp: at
+            }
+        };
+    }
+
+    async function creditPlaytime(game, durationMs) {
+        if (!settings.creditPlaytime || durationMs < 60_000 || !game?.id) return;
+
+        const session = clientSession();
+        const token = await getAnalyticsToken();
+        const gameSession = crypto.randomUUID();
+        const now = Date.now();
+        const startedAt = Math.max(0, now - Math.floor(durationMs));
+        const events = [
+            buildHeartbeat(game, 0, gameSession, true, startedAt),
+            buildLaunch(game, fingerprintFor(game.id), startedAt),
+            buildHeartbeat(game, Math.floor(durationMs), gameSession, false, now)
+        ];
+
+        if (restAPI?.post) {
+            await restAPI.post({ url: "/science", body: { token, events } });
+        } else {
+            const response = await discordFetch("/science", {
+                method: "POST",
+                credentials: "include",
+                headers: apiHeaders(session.superProperties),
+                body: JSON.stringify({ token, events })
+            });
+            if (!response.ok) throw new Error(`Discord returned ${response.status} while crediting playtime`);
+        }
+        console.info(`[Game Presence] Credited ${Math.round(durationMs / 60_000)}m of ${game.name}`);
+    }
+
+    function creditCurrentSession(game, durationMs) {
+        if (!settings.creditPlaytime) return;
+        creditPlaytime(game, durationMs).catch(error =>
+            console.warn(`[Game Presence] Could not credit ${game?.name ?? "game"} playtime:`, error)
+        );
+    }
+
+    function setDebugGame(game) {
+        dispatcher.dispatch({ type: "RUNNING_GAME_SET_DEBUG_GAME", game });
+    }
 
     function patchStore() {
         runStore.getRunningGames = () => current ? [...realGames(), current] : realGames();
@@ -2040,6 +2380,49 @@
                 return current ? [...list, current] : list;
             };
         }
+        if (original.getRunningDiscordApplicationIds) {
+            runStore.getRunningDiscordApplicationIds = () => {
+                const ids = original.getRunningDiscordApplicationIds.call(runStore) ?? [];
+                return current?.id ? Array.from(new Set([...ids, current.id])) : ids;
+            };
+        }
+        if (original.getRunningVerifiedApplicationIds) {
+            runStore.getRunningVerifiedApplicationIds = () => {
+                const ids = original.getRunningVerifiedApplicationIds.call(runStore) ?? [];
+                return current?.id ? Array.from(new Set([...ids, current.id])) : ids;
+            };
+        }
+        if (original.getCurrentGameForAnalytics) {
+            runStore.getCurrentGameForAnalytics = () =>
+                current ?? original.getCurrentGameForAnalytics.call(runStore);
+        }
+        if (original.getGamesSeen) {
+            runStore.getGamesSeen = includeHidden => {
+                const list = withoutOurs(original.getGamesSeen.call(runStore, includeHidden));
+                return current ? [...list, current] : list;
+            };
+        }
+        if (original.isGameSeen) {
+            runStore.isGameSeen = id => current?.id === id || original.isGameSeen.call(runStore, id);
+        }
+        if (original.isDetectionEnabled) {
+            runStore.isDetectionEnabled = game =>
+                current != null && (game?.pid === pid || game?.id === current.id)
+                    ? true
+                    : original.isDetectionEnabled.call(runStore, game);
+        }
+        if (original.getGameForName) {
+            runStore.getGameForName = name =>
+                current?.name?.toLowerCase() === String(name).toLowerCase()
+                    ? current
+                    : original.getGameForName.call(runStore, name);
+        }
+        if (original.getSeenGameByName) {
+            runStore.getSeenGameByName = name =>
+                current?.name?.toLowerCase() === String(name).toLowerCase()
+                    ? current
+                    : original.getSeenGameByName.call(runStore, name);
+        }
     }
 
     const ownBefore = new Set(PATCHED.filter(key => hasOwn(runStore, key)));
@@ -2050,29 +2433,42 @@
         }
     }
 
-    function clearActivity() {
+    function announceActivity() {
         if (!current) return;
-        const old = current;
-        current = null;
-        dispatcher.dispatch({ type: "RUNNING_GAMES_CHANGE", added: [], removed: [old], games: realGames() });
-        dispatcher.dispatch({ type: "LOCAL_ACTIVITY_UPDATE", socketId: null, pid, activity: null });
-    }
-
-    function activate() {
-        clearActivity();
-        current = buildGame(entry());
         dispatcher.dispatch({ type: "RUNNING_GAMES_CHANGE", added: [current], removed: [], games: runStore.getRunningGames() });
         dispatcher.dispatch({
             type: "LOCAL_ACTIVITY_UPDATE",
-            socketId: null,
+            socketId: "GamePresence",
             pid,
             activity: {
                 name: current.name,
                 application_id: current.application_id,
                 type: 0,
-                timestamps: { start: current.start }
+                details: null,
+                state: null,
+                timestamps: { start: current.start },
+                assets: null,
+                flags: 1
             }
         });
+    }
+
+    function clearActivity() {
+        if (!current) return;
+        const old = current;
+        current = null;
+        creditCurrentSession(old, Date.now() - old.start);
+        setDebugGame(null);
+        dispatcher.dispatch({ type: "RUNNING_GAMES_CHANGE", added: [], removed: [old], games: realGames() });
+        dispatcher.dispatch({ type: "LOCAL_ACTIVITY_UPDATE", socketId: "GamePresence", pid, activity: null });
+    }
+
+    function activate() {
+        clearActivity();
+        current = buildGame(entry());
+        setDebugGame(current);
+        announceActivity();
+        if (!activityHeartbeatTimer) activityHeartbeatTimer = setInterval(announceActivity, 30_000);
         ui.showGame(entry(), cursor, order.length);
         console.log(`[Game Presence] Playing (${cursor + 1}/${order.length}): ${current.name}`);
     }
@@ -2080,6 +2476,10 @@
     function schedule() {
         clearTimeout(switchTimer);
         switchTimer = null;
+        clearTimeout(breakTimer);
+        breakTimer = null;
+        breakEndsAt = 0;
+        isResting = false;
         if (settings.paused) {
             nextSwitchAt = 0;
         } else {
@@ -2087,13 +2487,34 @@
             const max = settings.maxMinutes * 60_000;
             switchDuration = min + Math.floor(Math.random() * (max - min + 1));
             nextSwitchAt = Date.now() + switchDuration;
-            switchTimer = setTimeout(() => go(1), switchDuration);
+            switchTimer = setTimeout(enterBreak, switchDuration);
         }
         ui.tick();
         ui.setPaused(settings.paused);
     }
 
+    function enterBreak() {
+        switchTimer = null;
+        nextSwitchAt = 0;
+        isResting = true;
+        clearActivity();
+        breakEndsAt = Date.now() + settings.restMinutes * 60_000;
+        breakTimer = setTimeout(() => {
+            breakTimer = null;
+            if (stopped || settings.paused) return;
+            isResting = false;
+            breakEndsAt = 0;
+            go(1);
+        }, settings.restMinutes * 60_000);
+        ui.tick();
+        console.log(`[Game Presence] Resting for ${settings.restMinutes}m before the next game.`);
+    }
+
     function go(step) {
+        clearTimeout(breakTimer);
+        breakTimer = null;
+        breakEndsAt = 0;
+        isResting = false;
         cursor = (cursor + step + order.length) % order.length;
         activate();
         schedule();
@@ -2110,12 +2531,25 @@
     function togglePause() {
         settings.paused = !settings.paused;
         save();
-        schedule();
+        if (settings.paused) {
+            clearTimeout(switchTimer);
+            clearTimeout(breakTimer);
+            switchTimer = null;
+            breakTimer = null;
+            nextSwitchAt = 0;
+            breakEndsAt = 0;
+            ui.tick();
+            ui.setPaused(true);
+            return;
+        }
+        if (current) schedule();
+        else enterBreak();
     }
 
-    function setIntervals(min, max) {
+    function setIntervals(min, max, rest = settings.restMinutes) {
         settings.minMinutes = clamp(Math.round(min) || 1, 1, 1440);
         settings.maxMinutes = clamp(Math.round(max) || settings.minMinutes, settings.minMinutes, 1440);
+        settings.restMinutes = clamp(Math.round(rest) || DEFAULTS.restMinutes, 1, 10);
         save();
         schedule();
     }
@@ -2124,9 +2558,16 @@
         if (stopped) return;
         stopped = true;
         clearTimeout(switchTimer);
+        clearTimeout(breakTimer);
+        breakTimer = null;
+        breakEndsAt = 0;
+        isResting = false;
         clearInterval(tickTimer);
+        clearInterval(activityHeartbeatTimer);
+        activityHeartbeatTimer = null;
         restoreStore();
         try { clearActivity(); } catch (_) {}
+        restoreNativeShim();
         window.removeEventListener("pagehide", stop);
         ui.destroy();
         delete window[LOCK];
@@ -2191,6 +2632,9 @@ button { font:inherit; border:0; cursor:pointer; }
 .drawer.open { display:block; }
 .drawer h4 { margin:0 0 10px; font-size:12px; }
 .row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:8px 0; font-size:11px; font-weight:600; color:var(--soft); }
+.check { display:flex; align-items:flex-start; gap:8px; margin:12px 0 4px; font-size:11px; line-height:1.35; color:var(--soft); cursor:pointer; }
+.check input { width:14px; height:14px; flex:0 0 auto; margin:1px 0 0; accent-color:var(--accent); }
+.hint { margin:0 0 8px 22px; color:var(--muted); font-size:10px; line-height:1.35; }
 input { height:30px; padding:5px 9px; border-radius:7px; border:1px solid rgba(255,255,255,.13);
         background:rgba(8,9,13,.6); color:#fff; font:inherit; font-size:12px; outline:none; }
 input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(125,84,217,.2); }
@@ -2234,6 +2678,9 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
     <h4>Change game every…</h4>
     <div class="row"><label for="gp-min">Minimum (min)</label><input id="gp-min" type="number" min="1" max="1440"></div>
     <div class="row"><label for="gp-max">Maximum (min)</label><input id="gp-max" type="number" min="1" max="1440"></div>
+    <div class="row"><label for="gp-rest">Offline break (min)</label><input id="gp-rest" type="number" min="1" max="10"></div>
+    <label class="check"><input id="gp-credit" type="checkbox"><span>Credit playtime to Discord analytics</span></label>
+    <p class="hint">Sends completed sessions to Discord. Disabled by default.</p>
     <button class="apply" data-act="apply">Apply</button>
   </div>
 </div>`;
@@ -2242,7 +2689,8 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
         const panel = $(".panel");
         const els = {
             count: $(".count"), icon: $(".icon"), title: $(".title"), sub: $(".sub"), bar: $(".bar"),
-            play: $(".play"), min: $("#gp-min"), max: $("#gp-max"), search: $(".search"), results: $(".results")
+            play: $(".play"), min: $("#gp-min"), max: $("#gp-max"), rest: $("#gp-rest"), credit: $("#gp-credit"),
+            search: $(".search"), results: $(".results")
         };
 
         const placeAtCorner = corner => {
@@ -2295,6 +2743,8 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
             if ($(`.drawer[data-drawer="settings"]`).classList.contains("open")) {
                 els.min.value = settings.minMinutes;
                 els.max.value = settings.maxMinutes;
+                els.rest.value = settings.restMinutes;
+                els.credit.checked = settings.creditPlaytime;
             }
         };
         const closeDrawers = () => shadow.querySelectorAll(".drawer").forEach(d => d.classList.remove("open"));
@@ -2313,7 +2763,11 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
             })]));
         };
         els.search.addEventListener("input", () => renderResults(els.search.value));
-        for (const input of [els.search, els.min, els.max]) {
+        els.credit.addEventListener("change", () => {
+            settings.creditPlaytime = els.credit.checked;
+            save();
+        });
+        for (const input of [els.search, els.min, els.max, els.rest]) {
             for (const type of ["keydown", "keyup", "keypress"]) {
                 input.addEventListener(type, e => e.stopPropagation());
             }
@@ -2322,7 +2776,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
             if (e.key === "Enter") els.results.querySelector(".result")?.click();
             if (e.key === "Escape") closeDrawers();
         });
-        for (const input of [els.min, els.max]) {
+        for (const input of [els.min, els.max, els.rest]) {
             input.addEventListener("keydown", e => {
                 if (e.key === "Enter") actions.apply();
             });
@@ -2336,7 +2790,10 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
             search: () => toggleDrawer("search"),
             settings: () => toggleDrawer("settings"),
             minimize: () => { host.classList.add("minimized"); settings.minimized = true; save(); },
-            apply: () => { setIntervals(Number(els.min.value), Number(els.max.value)); closeDrawers(); }
+            apply: () => {
+                setIntervals(Number(els.min.value), Number(els.max.value), Number(els.rest.value));
+                closeDrawers();
+            }
         };
         shadow.addEventListener("click", e => {
             const btn = e.target.closest("[data-act]");
@@ -2370,6 +2827,15 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
                 setTimeout(() => { if (token === renderToken) panel.classList.remove("pulse"); }, 900);
             },
             tick() {
+                if (isResting) {
+                    const left = Math.max(0, breakEndsAt - Date.now());
+                    const s = Math.floor(left / 1000);
+                    const m = Math.floor(s / 60), sec = s % 60;
+                    els.count.textContent = "Resting";
+                    els.sub.textContent = `Next game in ${m}m ${String(sec).padStart(2, "0")}s`;
+                    els.bar.style.width = `${(((settings.restMinutes * 60_000 - left) / (settings.restMinutes * 60_000)) * 100).toFixed(1)}%`;
+                    return;
+                }
                 if (!nextSwitchAt) {
                     els.sub.textContent = "Rotation paused";
                     els.bar.style.width = "0%";
@@ -2408,6 +2874,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
 
     window.addEventListener("pagehide", stop, { once: true });
     try {
+        installNativeShim();
         patchStore();
         activate();
         schedule();

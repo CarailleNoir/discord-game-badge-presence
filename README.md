@@ -19,13 +19,15 @@ This repository is a modified continuation of [everyoneexe/discord-game-badge-pr
 ## Features
 
 - Main script: `game-presence.js` (~120 KB, down from ~980 KB).
-- Compact embedded catalogue: 1 846 games stored as `[name, discord_application_id]`.
+- Live catalogue loaded from Discord's `detectables/games.json`, with the embedded 1 846-game catalogue used as fallback.
 - Large shuffled catalogue of popular games, including Minecraft, Fortnite, Roblox, CS:GO, GTA, Valorant, League of Legends, and many more.
 - Official game icons loaded from Discord's own CDN (`/applications/{id}/rpc`), with an emoji fallback.
 - Search panel to pick any game directly (ignores accents and punctuation).
 - Purple interface using `#7d54d9`, isolated in a Shadow DOM so its styles never leak into Discord.
 - Playback controls: previous, pause/resume, and next (wraps around the list).
 - Pause keeps the current game active indefinitely.
+- Default cycle: 20 minutes playing, followed by a 2-minute offline break.
+- Optional Discord analytics crediting for completed sessions, disabled by default.
 - Configurable minimum and maximum rotation intervals.
 - Drag the panel and snap it to any screen corner.
 - Pause state, minimized state, corner and intervals are remembered between runs.
@@ -60,7 +62,8 @@ window.__gamePresence.stop()
 - `▶ Play`: resume automatic rotation.
 - `⏭ Next`: advance to the next game.
 - `🔍 Search`: type a game name, press Enter or click a result to play it.
-- `⚙ Settings`: change the minimum and maximum interval (in minutes).
+- `⚙ Settings`: change the minimum and maximum interval and the offline break (in minutes).
+- In `⚙ Settings`, enable `Credit playtime to Discord analytics` to submit completed sessions to Discord's `/science` endpoint.
 - `_ Minimize`: collapse the panel into a small round button.
 - Drag the header: move the panel and snap it to one of four corners.
 - `✕ Stop`: restore Discord's original in-memory store methods and remove the synthetic activity.
@@ -72,7 +75,7 @@ window.__gamePresence.next()
 window.__gamePresence.previous()
 window.__gamePresence.play("minecraft")
 window.__gamePresence.togglePause()
-window.__gamePresence.setIntervals(20, 40)
+window.__gamePresence.setIntervals(20, 20, 2)
 window.__gamePresence.current
 window.__gamePresence.games
 window.__gamePresence.stop()
@@ -80,7 +83,9 @@ window.__gamePresence.stop()
 
 ## How it works
 
-The script locates Discord's Webpack module registry, resolves `RunningGameStore` and the Flux dispatcher, and injects one synthetic running-game record. It dispatches local game-state events while changing the displayed game according to the playback state. Each activity includes the matching catalogue entry's public `application_id` when Discord accepts it.
+The script loads Discord's detectable-game catalogue at startup, filters valid game IDs and Windows executables, and falls back to the embedded catalogue if the download fails. It then locates Discord's Webpack module registry, resolves `RunningGameStore` and the Flux dispatcher, and injects one synthetic running-game record. It patches the store's running, visible, seen, verified-ID, and analytics accessors, then dispatches debug and local game-state events while changing the displayed game according to the playback state. The activity is re-announced periodically so Discord's client-side tracking does not immediately drop it. Each activity includes the catalogue entry's public application ID and executable path.
+
+When analytics crediting is enabled, completed sessions are submitted to Discord's own `/science` endpoint using the same launch and heartbeat event shape as the desktop client. The option is off by default and does not guarantee badge progression.
 
 It does not launch games, modify Steam playtime, attach to game processes, access Discord tokens, read passwords, or send project telemetry to an external server. Synthetic executable paths are metadata only.
 
@@ -109,7 +114,7 @@ If the Webpack registry or game store cannot be found, the current Discord build
 
 ## Privacy
 
-The script does not intentionally collect or transmit tokens, passwords, session storage, or telemetry. Always inspect the source before running code in a privileged application console.
+The script does not intentionally collect or transmit raw tokens, passwords, or session storage. With analytics crediting enabled, it sends completed game-session events to Discord itself; with it disabled, it does not send those analytics events. Always inspect the source before running code in a privileged application console.
 
 ## License and trademarks
 
