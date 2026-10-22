@@ -1889,7 +1889,10 @@
         if (window.Vencord?.Webpack?.wreq?.c) return window.Vencord.Webpack.wreq;
         if (typeof window.webpackChunkdiscord_app === "undefined") return null;
         let req;
-        window.webpackChunkdiscord_app.push([[Symbol("game-presence")], {}, r => { req = r; }]);
+        const size = r => Object.keys(r?.c ?? {}).length;
+        window.webpackChunkdiscord_app.push([[Symbol("game-presence")], {}, r => {
+            if (size(r) > size(req)) req = r;
+        }]);
         window.webpackChunkdiscord_app.pop();
         return req;
     }
@@ -1914,7 +1917,10 @@
         (v.getName?.() === "RunningGameStore" || v.constructor?.displayName === "RunningGameStore"));
     const dispatcher = findInModules(req, v => typeof v.dispatch === "function" &&
         typeof v.subscribe === "function" && v._subscriptions);
-    if (!runStore || !dispatcher) throw new Error("[Game Presence] RunningGameStore ou Dispatcher introuvable.");
+    if (!runStore || !dispatcher) {
+        const missing = [!runStore && "RunningGameStore", !dispatcher && "Dispatcher"].filter(Boolean).join(" et ");
+        throw new Error(`[Game Presence] ${missing} introuvable (${Object.keys(req.c).length} modules scannés).`);
+    }
 
     const PATCHED = ["getRunningGames", "getGameForPID", "getVisibleGame", "getVisibleRunningGames", "getCandidateGames"];
     const original = {};
