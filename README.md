@@ -18,18 +18,18 @@ This repository is a modified continuation of [everyoneexe/discord-game-badge-pr
 
 ## Features
 
-- Main script: `game-presence.js`.
-- Catalogue complet embarqué dans `game-presence.js`, avec 1 845 fiches et leurs données de catalogue.
-- Chaque fiche conserve son `discord_application_id`, ses alias, son `verify_key` source et ses `third_party_skus` (`distributor`, `id`, `sku`).
-- Large shuffled catalogue of popular games, including Minecraft, Fortnite, Roblox, CS2, GTA, Valorant, League of Legends, and many more.
-- Purple interface using `#7d54d9`.
-- Playback controls: previous, pause/resume, and next.
+- Main script: `game-presence.js` (~135 KB, down from ~980 KB).
+- Compact embedded catalogue: 1 845 games stored as `[name, discord_application_id, steam_appid?]`.
+- Large shuffled catalogue of popular games, including Minecraft, Fortnite, Roblox, CS:GO, GTA, Valorant, League of Legends, and many more.
+- Game logos for every game with a Steam ID (1 549 games), with an emoji fallback.
+- Search panel to pick any game directly (ignores accents and punctuation).
+- Purple interface using `#7d54d9`, isolated in a Shadow DOM so its styles never leak into Discord.
+- Playback controls: previous, pause/resume, and next (wraps around the list).
 - Pause keeps the current game active indefinitely.
 - Configurable minimum and maximum rotation intervals.
 - Drag the panel and snap it to any screen corner.
-- Game-logo loading with a safe fallback when an image is unavailable.
-- Linux and Windows executable metadata selection.
-- Clean shutdown that restores patched store methods.
+- Pause state, minimized state, corner and intervals are remembered between runs.
+- Clean shutdown that restores patched store methods. Discord is only patched once the panel is ready.
 
 ## Requirements
 
@@ -55,20 +55,25 @@ window.__gamePresence.stop()
 
 ## Controls
 
-- `Previous`: go to the previous game; disabled at the beginning of the shuffled list.
-- `Pause`: keep the current game active forever and stop the rotation timer.
-- `Play`: resume automatic rotation.
-- `Next`: advance to the next game.
-- `Settings`: change the minimum and maximum interval.
+- `⏮ Previous`: go to the previous game (wraps to the end of the list).
+- `⏸ Pause`: keep the current game active forever and stop the rotation timer.
+- `▶ Play`: resume automatic rotation.
+- `⏭ Next`: advance to the next game.
+- `🔍 Search`: type a game name, press Enter or click a result to play it.
+- `⚙ Settings`: change the minimum and maximum interval (in minutes).
+- `_ Minimize`: collapse the panel into a small round button.
 - Drag the header: move the panel and snap it to one of four corners.
-- `Stop`: restore Discord's original in-memory store methods and remove the synthetic activity.
+- `✕ Stop`: restore Discord's original in-memory store methods and remove the synthetic activity.
 
 ## Console commands
 
 ```js
 window.__gamePresence.next()
+window.__gamePresence.previous()
+window.__gamePresence.play("minecraft")
+window.__gamePresence.togglePause()
+window.__gamePresence.setIntervals(20, 40)
 window.__gamePresence.current
-window.__gamePresence.currentGame
 window.__gamePresence.games
 window.__gamePresence.stop()
 ```
@@ -81,13 +86,13 @@ It does not launch games, modify Steam playtime, attach to game processes, acces
 
 ## Catalogue data and Rich Presence
 
-The embedded catalogue keeps the source fields needed to inspect each game:
+The embedded catalogue only keeps the fields the script actually uses:
 
-- `discord_application_id`: the public Discord application ID associated with the game.
-- `third_party_skus`: distributor records containing `id` and `sku` values.
-- `verify_key`: source catalogue metadata retained for reference only.
+- the game name;
+- `discord_application_id`: the public Discord application ID associated with the game;
+- the Steam app ID, when the source catalogue has one, used only to load the game logo.
 
-The local Rich Presence payload sends the game name, type, timestamps, and matching `application_id`. The `verify_key`, SKU `id`, and SKU `sku` remain available through `window.__gamePresence.currentGame`, but are not sent as Rich Presence fields because they are not part of Discord's activity payload. The script never treats them as client secrets or credentials.
+The source catalogue is [this public list](https://gist.github.com/1271/cf4b6a3b562532988fa5b0688102b2cc). The local Rich Presence payload sends the game name, type, timestamps, and matching `application_id`.
 
 ## Limitations
 
