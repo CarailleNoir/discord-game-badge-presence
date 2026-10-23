@@ -9,6 +9,10 @@ void (async () => {
         window[LOCK].stop();
     }
 
+    let cancelledWhileLoading = false;
+    const loadingLock = { loading: true, stop: () => { cancelledWhileLoading = true; } };
+    window[LOCK] = loadingLock;
+
     let CATALOG = [
         ["SpeedRunners","259392830932254721"],
         ["Move or Die","343232907390746625"],
@@ -1932,10 +1936,18 @@ void (async () => {
 
     try {
         const remoteCatalogue = await fetchDetectableCatalogue();
-        CATALOG = remoteCatalogue;
-        console.info(`[Game Presence] Loaded ${CATALOG.length} detectable games from Discord.`);
+        const remoteIds = new Set(remoteCatalogue.map(([, id]) => id));
+        const embeddedOnly = CATALOG.filter(([, id]) => !remoteIds.has(id));
+        CATALOG = [...remoteCatalogue, ...embeddedOnly];
+        console.info(`[Game Presence] Loaded ${remoteCatalogue.length} detectable games from Discord (+${embeddedOnly.length} embedded).`);
     } catch (error) {
         console.warn("[Game Presence] Could not load Discord's catalogue; using embedded fallback.", error);
+    }
+
+    if (cancelledWhileLoading || window[LOCK] !== loadingLock) {
+        if (window[LOCK] === loadingLock) delete window[LOCK];
+        console.warn("[Game Presence] Startup cancelled.");
+        return;
     }
 
     function normalize(s) {
@@ -2510,22 +2522,27 @@ void (async () => {
         console.log(`[Game Presence] Resting for ${settings.restMinutes}m before the next game.`);
     }
 
-    function go(step) {
+    function clearBreak() {
         clearTimeout(breakTimer);
         breakTimer = null;
         breakEndsAt = 0;
         isResting = false;
-        cursor = (cursor + step + order.length) % order.length;
+    }
+
+    function playAt(position) {
+        clearBreak();
+        cursor = (position + order.length) % order.length;
         activate();
         schedule();
     }
 
+    function go(step) {
+        playAt(cursor + step);
+    }
+
     function playIndex(catalogIndex) {
         const pos = order.indexOf(catalogIndex);
-        if (pos < 0) return;
-        cursor = pos;
-        activate();
-        schedule();
+        if (pos >= 0) playAt(pos);
     }
 
     function togglePause() {
@@ -2533,11 +2550,9 @@ void (async () => {
         save();
         if (settings.paused) {
             clearTimeout(switchTimer);
-            clearTimeout(breakTimer);
             switchTimer = null;
-            breakTimer = null;
             nextSwitchAt = 0;
-            breakEndsAt = 0;
+            clearBreak();
             ui.tick();
             ui.setPaused(true);
             return;
@@ -2551,7 +2566,7 @@ void (async () => {
         settings.maxMinutes = clamp(Math.round(max) || settings.minMinutes, settings.minMinutes, 1440);
         settings.restMinutes = clamp(Math.round(rest) || DEFAULTS.restMinutes, 1, 10);
         save();
-        schedule();
+        if (current || settings.paused) schedule();
     }
 
     function stop() {
@@ -2837,6 +2852,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
                     return;
                 }
                 if (!nextSwitchAt) {
+                    if (!current) els.count.textContent = "Paused";
                     els.sub.textContent = "Rotation paused";
                     els.bar.style.width = "0%";
                     return;
